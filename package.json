@@ -1,0 +1,36 @@
+{
+  "name": "@tonia/sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript client for tonia Pass",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
+    "generate": "cd ../tonia-api && ./generate.sh --sdk-repos"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tonia-router/typescript-sdk.git"
+  },
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}
