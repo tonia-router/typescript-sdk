@@ -4,9 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -15,11 +17,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run build
       - run: npm pack
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -27,12 +31,14 @@ jobs:
           cat > /tmp/notes.md <<EOF
           Official TypeScript client for tonia Pass (\`@tonia/sdk\`).
 
-          Install from npm after registry publish: \`npm add @tonia/sdk\`
-
-          From this release:
-
-              npm add https://github.com/tonia-router/typescript-sdk/releases/download/${TAG}/tonia-sdk-0.2.1.tgz
+          Install: \`npm add @tonia/sdk\`
 
           Requires Node.js 22+. Apache 2.0, copyright 2026 tonia inc.
           EOF
-          gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md tonia-sdk-*.tgz
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" tonia-sdk-*.tgz --clobber
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md tonia-sdk-*.tgz
+          fi
+      - name: Publish to npm
+        run: npm publish --access public

@@ -23,7 +23,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/tonia-router/typescript-sdk.git"
+    "url": "git+https://github.com/tonia-router/typescript-sdk.git"
   },
   "homepage": "https://github.com/tonia-router/typescript-sdk",
   "publishConfig": {
