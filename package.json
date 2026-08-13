@@ -25,6 +25,10 @@
     "type": "git",
     "url": "https://github.com/tonia-router/typescript-sdk.git"
   },
+  "homepage": "https://github.com/tonia-router/typescript-sdk",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "Apache-2.0",
   "engines": {
     "node": ">=22"
