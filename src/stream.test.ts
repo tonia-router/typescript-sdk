@@ -11,6 +11,19 @@ test("feedSse parses framed events and keeps remainder", () => {
   assert.equal(rest, 'data: {"b"');
 });
 
+test("raiseIfStreamCarrier detects nested Anthropic message_start carrier", () => {
+  assert.throws(
+    () =>
+      raiseIfStreamCarrier({
+        type: "message_start",
+        message: {
+          _tonia_policy_block: { code: "regulated_content_detected" },
+        },
+      }),
+    PolicyBlockError,
+  );
+});
+
 test("raiseIfStreamCarrier detects policy block on stream payload", () => {
   assert.throws(
     () => raiseIfStreamCarrier({ _tonia_policy_block: { code: "regulated_content_detected" } }),

@@ -9,6 +9,8 @@ export type ToniaErrorType =
   | "policy_block"
   | "tenant_upstream_blocked"
   | "managed_credential_unavailable"
+  | "rate_limit_error"
+  | "api_error"
   | "client_error";
 
 export interface StructuredErrorBody {
@@ -17,7 +19,35 @@ export interface StructuredErrorBody {
   retryable?: boolean;
   message?: string;
   provider?: string;
+  reason?: string;
+  scope?: string;
   [key: string]: unknown;
+}
+
+type HeaderSource = Headers | Record<string, string> | undefined;
+
+function headerGet(headers: HeaderSource, name: string): string | undefined {
+  if (!headers) return undefined;
+  if (typeof (headers as Headers).get === "function") {
+    return (headers as Headers).get(name) ?? undefined;
+  }
+  const rec = headers as Record<string, string>;
+  const found = Object.entries(rec).find(
+    ([key]) => key.toLowerCase() === name.toLowerCase(),
+  );
+  return found?.[1];
+}
+
+/** Integer `Retry-After` seconds, or undefined when missing / HTTP-date. */
+export function parseRetryAfterSeconds(headers?: HeaderSource): number | undefined {
+  const raw = headerGet(headers, "retry-after")?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return undefined;
+  return Number(raw);
+}
+
+export function parseRequestId(headers?: HeaderSource): string | undefined {
+  const raw = headerGet(headers, "x-tonia-request-id")?.trim();
+  return raw ? raw : undefined;
 }
 
 export class ToniaError extends Error {
@@ -27,6 +57,9 @@ export class ToniaError extends Error {
   readonly status?: number;
   readonly body?: unknown;
   readonly headers?: Headers;
+  /** Parsed `Retry-After` delay-seconds when Pass sent an integer. */
+  readonly retryAfterSeconds?: number;
+  readonly requestId?: string;
 
   constructor(
     message: string,
@@ -47,6 +80,8 @@ export class ToniaError extends Error {
     this.status = opts.status;
     this.body = opts.body;
     this.headers = opts.headers;
+    this.retryAfterSeconds = parseRetryAfterSeconds(opts.headers);
+    this.requestId = parseRequestId(opts.headers);
   }
 }
 
@@ -66,16 +101,20 @@ export class BillingError extends ToniaError {
 
 export class EntitlementError extends ToniaError {
   readonly entitlementBlock?: unknown;
+  /** `member` | `organization` | `operator` on entitlement envelopes. */
+  readonly scope?: string;
 
   constructor(
     message: string,
     opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type"> & {
       entitlementBlock?: unknown;
+      scope?: string;
     },
   ) {
     super(message, { ...opts, type: "entitlement_error" });
     this.name = "EntitlementError";
     this.entitlementBlock = opts.entitlementBlock;
+    this.scope = opts.scope;
   }
 }
 
@@ -116,9 +155,44 @@ export class TenantUpstreamBlockedError extends ToniaError {
 }
 
 export class ManagedCredentialUnavailableError extends ToniaError {
-  constructor(message: string, opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type">) {
+  readonly provider?: string;
+
+  constructor(
+    message: string,
+    opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type"> & {
+      provider?: string;
+    },
+  ) {
     super(message, { ...opts, type: "managed_credential_unavailable" });
     this.name = "ManagedCredentialUnavailableError";
+    this.provider = opts.provider;
+  }
+}
+
+export class RateLimitError extends ToniaError {
+  /** Admission reason: `rpm_per_key` or `concurrency_*`. */
+  readonly reason?: string;
+  /** Admission scope: `key` | `tenant` | `global`. */
+  readonly scope?: string;
+
+  constructor(
+    message: string,
+    opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type"> & {
+      reason?: string;
+      scope?: string;
+    },
+  ) {
+    super(message, { ...opts, type: "rate_limit_error" });
+    this.name = "RateLimitError";
+    this.reason = opts.reason;
+    this.scope = opts.scope;
+  }
+}
+
+export class ApiError extends ToniaError {
+  constructor(message: string, opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type">) {
+    super(message, { ...opts, type: "api_error" });
+    this.name = "ApiError";
   }
 }
 
@@ -151,7 +225,10 @@ export function errorFromStructured(
     case "billing_error":
       return new BillingError(message, base);
     case "entitlement_error":
-      return new EntitlementError(message, base);
+      return new EntitlementError(message, {
+        ...base,
+        scope: typeof err.scope === "string" ? err.scope : undefined,
+      });
     case "invalid_request_error":
       return new InvalidRequestError(message, base);
     case "byok_key_missing":
@@ -161,9 +238,68 @@ export function errorFromStructured(
     case "tenant_upstream_blocked":
       return new TenantUpstreamBlockedError(message, base);
     case "managed_credential_unavailable":
-      return new ManagedCredentialUnavailableError(message, base);
+      return new ManagedCredentialUnavailableError(message, {
+        ...base,
+        provider: typeof err.provider === "string" ? err.provider : undefined,
+      });
+    case "rate_limit_error":
+      return new RateLimitError(message, {
+        ...base,
+        reason: typeof err.reason === "string" ? err.reason : undefined,
+        scope: typeof err.scope === "string" ? err.scope : undefined,
+      });
+    case "api_error":
+      return new ApiError(message, base);
     default:
       return new ToniaError(message, { ...base, type: err.type });
+  }
+}
+
+/**
+ * Fallback when Pass returns 4xx/5xx without a structured `error` envelope.
+ * Bare 429/502/503 are retryable; other statuses stay non-retryable.
+ */
+export function errorFromHttpFallback(
+  status: number,
+  opts: { body?: unknown; headers?: Headers } = {},
+): ToniaError {
+  const message = `HTTP ${status}`;
+  const base = { status, body: opts.body, headers: opts.headers };
+  if (status === 429) {
+    return new RateLimitError(message, { ...base, retryable: true });
+  }
+  if (status === 502 || status === 503) {
+    return new ApiError(message, { ...base, retryable: true });
+  }
+  return new ToniaError(message, {
+    ...base,
+    type: "invalid_request_error",
+    retryable: false,
+  });
+}
+
+/** Raise if Pass already decided the stream is blocked (headers, before SSE). */
+export function raiseFromStreamHeaders(headers?: Headers): void {
+  if (!headers) return;
+  const policy = headers.get("x-tonia-policy-block");
+  if (policy) {
+    throw new PolicyBlockError("tonia policy block", {
+      code: policy,
+      retryable: false,
+      status: 200,
+      headers,
+      policyBlock: { code: policy },
+    });
+  }
+  const entitlement = headers.get("x-tonia-entitlement-block");
+  if (entitlement) {
+    throw new EntitlementError("tonia entitlement block", {
+      code: entitlement,
+      retryable: true,
+      status: 200,
+      headers,
+      entitlementBlock: { code: entitlement },
+    });
   }
 }
 
@@ -203,6 +339,7 @@ export function raiseFromResponseBody(
         body,
         headers: opts.headers,
         entitlementBlock: carrier,
+        scope: typeof carrier.scope === "string" ? carrier.scope : undefined,
         retryable:
           typeof carrier.retryable === "boolean" ? carrier.retryable : true,
       });

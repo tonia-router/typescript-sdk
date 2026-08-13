@@ -1,27 +1,52 @@
 import { assertPathAllowed } from "./escape.js";
 import {
   AuthenticationError,
+  errorFromHttpFallback,
   raiseFromResponseBody,
-  ToniaError,
+  raiseFromStreamHeaders,
 } from "./errors.js";
 import { limitsFromHeaders, type LimitInfo } from "./limits.js";
 import { iterateSse, type SseEvent } from "./stream.js";
+import type {
+  PublicCatalogue,
+  PublicModel,
+  PublicModelList,
+  RuntimeModel,
+  RuntimeModelList,
+} from "./types.js";
 
 export type AuthStyle = "bearer" | "api_key";
+
+/** Image / interactions helpers abort after this many ms when `timeout` is unset. */
+export const IMAGE_TIMEOUT_MS = 300_000;
+
+export const SDK_VERSION = "0.2.1";
+export const SDK_USER_AGENT = `tonia-sdk-ts/${SDK_VERSION}`;
 
 export interface ToniaOptions {
   /** `tonia_*` key. Defaults to `process.env.TONIA_API_KEY`. */
   apiKey?: string;
-  /** Defaults to `https://pass.tonia.ca`. Never falls back to an upstream lab. */
+  /** Defaults to `https://pass.tonia.ca:8443`. Never falls back to an upstream lab. */
   baseURL?: string;
   /** Extra headers on every request (attribution: HTTP-Referer, X-Tonia-Title, …). */
   defaultHeaders?: Record<string, string>;
+  /**
+   * Abort after this many milliseconds. Unset means no abort on chat/runtime
+   * calls. Image helpers (`images.*`, `interactions.create`) default to
+   * `IMAGE_TIMEOUT_MS` (300s) when this is unset.
+   */
+  timeout?: number;
   /** Override fetch (tests). */
   fetch?: typeof fetch;
 }
 
 function defaultBaseURL(): string {
-  return "https://pass.tonia.ca";
+  return "https://pass.tonia.ca:8443";
+}
+
+function headerHas(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lower);
 }
 
 function resolveApiKey(explicit?: string): string | undefined {
@@ -33,6 +58,8 @@ function resolveApiKey(explicit?: string): string | undefined {
 
 export class Tonia {
   readonly baseURL: string;
+  /** Caller-set timeout in milliseconds, if any. */
+  readonly timeout?: number;
   private readonly apiKey?: string;
   private readonly defaultHeaders: Record<string, string>;
   private readonly fetchImpl: typeof fetch;
@@ -52,10 +79,10 @@ export class Tonia {
   readonly responses: ResponsesResource;
   readonly rerank: RerankResource;
   readonly interactions: InteractionsResource;
-  readonly conversations: ConversationsResource;
 
   constructor(options: ToniaOptions = {}) {
     this.baseURL = (options.baseURL ?? defaultBaseURL()).replace(/\/+$/, "");
+    this.timeout = options.timeout;
     this.apiKey = resolveApiKey(options.apiKey);
     this.defaultHeaders = { ...(options.defaultHeaders ?? {}) };
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
@@ -72,7 +99,6 @@ export class Tonia {
     this.responses = new ResponsesResource(this);
     this.rerank = new RerankResource(this);
     this.interactions = new InteractionsResource(this);
-    this.conversations = new ConversationsResource(this);
   }
 
   /**
@@ -83,17 +109,17 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string> } = {},
+    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
   ): Promise<T> {
     const normalized = assertPathAllowed(path);
     return this.send<T>(method, normalized, body, opts);
   }
 
-  async send<T>(
+  private async send<T>(
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string> } = {},
+    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
   ): Promise<T> {
     const res = await this.rawFetch(method, path, body, opts);
     const text = await res.text();
@@ -109,12 +135,9 @@ export class Tonia {
     raiseFromResponseBody(parsed, { status: res.status, headers: res.headers });
 
     if (!res.ok) {
-      throw new ToniaError(`HTTP ${res.status}`, {
-        type: "invalid_request_error",
-        status: res.status,
+      throw errorFromHttpFallback(res.status, {
         body: parsed,
         headers: res.headers,
-        retryable: false,
       });
     }
 
@@ -127,15 +150,16 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string> } = {},
+    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
   ): AsyncGenerator<SseEvent, void, unknown> {
+    const normalized = assertPathAllowed(path);
     const self = this;
     return (async function* () {
       const payload =
         body && typeof body === "object"
           ? { ...(body as Record<string, unknown>), stream: true }
           : body;
-      const res = await self.rawFetch(method, path, payload, {
+      const res = await self.rawFetch(method, normalized, payload, {
         ...opts,
         headers: {
           Accept: "text/event-stream",
@@ -156,16 +180,20 @@ export class Tonia {
         }
         raiseFromResponseBody(parsed, { status: res.status, headers: res.headers });
         if (!res.ok) {
-          throw new ToniaError(`HTTP ${res.status}`, {
-            type: "invalid_request_error",
-            status: res.status,
+          throw errorFromHttpFallback(res.status, {
             body: parsed,
             headers: res.headers,
-            retryable: false,
           });
         }
         // Non-SSE success body (e.g. chat_200 carrier already raised above).
         return;
+      }
+
+      try {
+        raiseFromStreamHeaders(res.headers);
+      } catch (err) {
+        await res.body?.cancel();
+        throw err;
       }
 
       yield* iterateSse(res.body);
@@ -176,13 +204,16 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string> } = {},
+    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
   ): Promise<Response> {
     const headers: Record<string, string> = {
       Accept: "application/json",
       ...this.defaultHeaders,
       ...(opts.headers ?? {}),
     };
+    if (!headerHas(headers, "user-agent")) {
+      headers["User-Agent"] = SDK_USER_AGENT;
+    }
 
     const auth = opts.auth ?? "bearer";
     if (auth !== "none") {
@@ -206,24 +237,33 @@ export class Tonia {
     }
 
     const url = `${this.baseURL}${path.startsWith("/") ? path : `/${path}`}`;
-    return this.fetchImpl(url, { method, headers, body: payload });
+    const timeoutMs = opts.timeout ?? this.timeout;
+    const init: RequestInit = { method, headers, body: payload };
+    if (timeoutMs != null && timeoutMs > 0) {
+      init.signal = AbortSignal.timeout(timeoutMs);
+    }
+    return this.fetchImpl(url, init);
   }
 }
 
 class CatalogueResource {
   constructor(private readonly client: Tonia) {}
   list() {
-    return this.client.send("GET", "/v1/public/catalogue", undefined, { auth: "none" });
+    return this.client.request<PublicCatalogue>("GET", "/v1/public/catalogue", undefined, {
+      auth: "none",
+    });
   }
 }
 
 class PublicModelsResource {
   constructor(private readonly client: Tonia) {}
   list() {
-    return this.client.send("GET", "/v1/public/models", undefined, { auth: "none" });
+    return this.client.request<PublicModelList>("GET", "/v1/public/models", undefined, {
+      auth: "none",
+    });
   }
   get(id: string) {
-    return this.client.send(
+    return this.client.request<PublicModel>(
       "GET",
       `/v1/public/models/${encodeURIComponent(id)}`,
       undefined,
@@ -235,7 +275,7 @@ class PublicModelsResource {
 class PublicModelCategoriesResource {
   constructor(private readonly client: Tonia) {}
   list() {
-    return this.client.send("GET", "/v1/public/model-categories", undefined, {
+    return this.client.request("GET", "/v1/public/model-categories", undefined, {
       auth: "none",
     });
   }
@@ -244,28 +284,30 @@ class PublicModelCategoriesResource {
 class StatusResource {
   constructor(private readonly client: Tonia) {}
   get() {
-    return this.client.send("GET", "/v1/status", undefined, { auth: "none" });
+    return this.client.request("GET", "/v1/status", undefined, { auth: "none" });
   }
 }
 
 class ModelsResource {
   constructor(private readonly client: Tonia) {}
   list() {
-    return this.client.send("GET", "/v1/models");
+    return this.client.request<RuntimeModelList>("GET", "/v1/models");
   }
   get(id: string) {
-    return this.client.send("GET", `/v1/models/${encodeURIComponent(id)}`);
+    return this.client.request<RuntimeModel>("GET", `/v1/models/${encodeURIComponent(id)}`);
   }
 }
 
 class ChatCompletionsResource {
   constructor(private readonly client: Tonia) {}
 
+  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
+  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
   create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
       return this.stream(body);
     }
-    return this.client.send("POST", "/v1/chat/completions", body, { auth: "bearer" });
+    return this.client.request("POST", "/v1/chat/completions", body, { auth: "bearer" });
   }
 
   stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
@@ -283,11 +325,13 @@ class ChatResource {
 class MessagesResource {
   constructor(private readonly client: Tonia) {}
 
+  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
+  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
   create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
       return this.stream(body);
     }
-    return this.client.send("POST", "/v1/messages", body, { auth: "api_key" });
+    return this.client.request("POST", "/v1/messages", body, { auth: "api_key" });
   }
 
   stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
@@ -298,28 +342,36 @@ class MessagesResource {
 class EmbeddingsResource {
   constructor(private readonly client: Tonia) {}
   create(body: Record<string, unknown>) {
-    return this.client.send("POST", "/v1/embeddings", body);
+    return this.client.request("POST", "/v1/embeddings", body);
   }
 }
 
 class ImagesResource {
   constructor(private readonly client: Tonia) {}
+  /** Path A generate (openai / xAI / StepFun). Gemini uses interactions.create. */
   generate(body: Record<string, unknown>) {
-    return this.client.send("POST", "/v1/images/generations", body);
+    return this.client.request("POST", "/v1/images/generations", body, {
+      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+    });
   }
+  /** Path A edit (openai / xAI / StepFun). Gemini uses interactions.create. */
   edit(body: Record<string, unknown>) {
-    return this.client.send("POST", "/v1/images/edits", body);
+    return this.client.request("POST", "/v1/images/edits", body, {
+      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+    });
   }
 }
 
 class ResponsesResource {
   constructor(private readonly client: Tonia) {}
 
+  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
+  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
   create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
       return this.stream(body);
     }
-    return this.client.send("POST", "/v1/responses", body);
+    return this.client.request("POST", "/v1/responses", body);
   }
 
   stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
@@ -330,64 +382,26 @@ class ResponsesResource {
 class RerankResource {
   constructor(private readonly client: Tonia) {}
   create(body: Record<string, unknown>) {
-    return this.client.send("POST", "/v1/rerank", body);
+    return this.client.request("POST", "/v1/rerank", body);
   }
 }
 
 class InteractionsResource {
   constructor(private readonly client: Tonia) {}
 
+  /** Gemini text and image SKUs. Native Interactions body, not Path A. */
+  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
+  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
   create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
       return this.stream(body);
     }
-    return this.client.send("POST", "/v1/interactions", body);
+    return this.client.request("POST", "/v1/interactions", body, {
+      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+    });
   }
 
   stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
     return this.client.stream("POST", "/v1/interactions", body);
-  }
-}
-
-class ConversationsResource {
-  constructor(private readonly client: Tonia) {}
-  list(query?: { archived?: 1 }) {
-    const q = query?.archived === 1 ? "?archived=1" : "";
-    return this.client.send("GET", `/v1/conversations${q}`);
-  }
-  create(body?: Record<string, unknown>) {
-    return this.client.send("POST", "/v1/conversations", body ?? {});
-  }
-  get(conversationId: string) {
-    return this.client.send(
-      "GET",
-      `/v1/conversations/${encodeURIComponent(conversationId)}`,
-    );
-  }
-  update(conversationId: string, body: { archived: boolean }) {
-    return this.client.send(
-      "PATCH",
-      `/v1/conversations/${encodeURIComponent(conversationId)}`,
-      body,
-    );
-  }
-  delete(conversationId: string) {
-    return this.client.send(
-      "DELETE",
-      `/v1/conversations/${encodeURIComponent(conversationId)}`,
-    );
-  }
-  export() {
-    return this.client.send("GET", "/v1/conversations/export");
-  }
-  append(conversationId: string, body: Record<string, unknown>) {
-    return this.client.send(
-      "POST",
-      `/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
-      body,
-    );
-  }
-  deleteHistory() {
-    return this.client.send("DELETE", "/v1/conversations");
   }
 }

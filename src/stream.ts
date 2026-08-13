@@ -46,6 +46,11 @@ export function feedSse(buffer: string, chunk: string): { events: SseEvent[]; re
 /** Raise if a parsed SSE/JSON payload carries a tonia block. */
 export function raiseIfStreamCarrier(payload: unknown): void {
   raiseFromResponseBody(payload, { status: 200 });
+  if (!payload || typeof payload !== "object") return;
+  const nested = (payload as { message?: unknown }).message;
+  if (nested && typeof nested === "object") {
+    raiseFromResponseBody(nested, { status: 200 });
+  }
 }
 
 export async function* iterateSse(

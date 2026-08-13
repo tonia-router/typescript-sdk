@@ -1,4 +1,11 @@
-export { Tonia, type ToniaOptions, type AuthStyle } from "./client.js";
+export {
+  Tonia,
+  IMAGE_TIMEOUT_MS,
+  SDK_USER_AGENT,
+  SDK_VERSION,
+  type ToniaOptions,
+  type AuthStyle,
+} from "./client.js";
 export {
   ToniaError,
   AuthenticationError,
@@ -9,8 +16,22 @@ export {
   PolicyBlockError,
   TenantUpstreamBlockedError,
   ManagedCredentialUnavailableError,
+  RateLimitError,
+  ApiError,
   PathNotAllowedError,
 } from "./errors.js";
 export { ESCAPE_HATCH_PREFIXES, assertPathAllowed, normalizePath } from "./escape.js";
 export { limitsFromHeaders, type LimitInfo } from "./limits.js";
+export type {
+  CatalogueOffer,
+  CatalogueProduct,
+  EntitlementTemplate,
+  PublicCatalogue,
+  PublicChannel,
+  PublicModel,
+  PublicModelList,
+  ReasoningDescriptor,
+  RuntimeModel,
+  RuntimeModelList,
+} from "./types.js";
 export { feedSse, type SseEvent } from "./stream.js";

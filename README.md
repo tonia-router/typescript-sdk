@@ -5,8 +5,20 @@ Official TypeScript / JavaScript client for [tonia Pass](https://pass.tonia.ca).
 **Package:** [`@tonia/sdk`](https://www.npmjs.com/package/@tonia/sdk)  
 **API contract:** [`tonia-api`](https://github.com/tonia-router/tonia-api)
 
+**Node.js:** 22 or newer (Maintenance LTS 22, Active LTS 24). Node 18 and
+20 are end-of-life and are not supported. The package is built with
+TypeScript 6.0 (not 7 yet — 7.0 still lacks the stable programmatic API
+many tools need).
+
+**License:** Copyright 2026 tonia. Apache 2.0 — commercial use allowed.
+Keep the copyright notice and `NOTICE` (attribution to tonia,
+https://tonia.ca) if you copy or redistribute this software.
+
 ```bash
-npm add @tonia/sdk
+# local-staging (packages not on npm yet):
+#   cd ../typescript-sdk && npm install && npm run build
+npm add ../typescript-sdk
+# published: npm add @tonia/sdk
 ```
 
 ```ts
@@ -14,22 +26,25 @@ import { Tonia } from "@tonia/sdk";
 
 const client = new Tonia({
   apiKey: process.env.TONIA_API_KEY!,
-  // baseURL defaults to https://pass.tonia.ca
+  // baseURL defaults to https://pass.tonia.ca:8443
   defaultHeaders: {
     "HTTP-Referer": "https://example.com",
     "X-Tonia-Title": "Example App",
   },
 });
 
-const models = await client.models.list();
+const { data } = await client.models.list();
+if (!data[0]) {
+  throw new Error("empty allowlist — do not guess a model id");
+}
 const completion = await client.chat.completions.create({
-  model: "openai/gpt-4.1-mini",
+  model: data[0].id,
   messages: [{ role: "user", content: "Bonjour" }],
 });
 
 // Streaming (SSE) — do not buffer the full response
 for await (const event of client.chat.completions.stream({
-  model: "openai/gpt-4.1-mini",
+  model: data[0].id,
   messages: [{ role: "user", content: "Bonjour" }],
 })) {
   if (event.json) {
@@ -43,20 +58,143 @@ client.lastLimits;
 
 ## What you can call
 
-- Public catalogue, public models, and service status (no key)
+- Public catalogue, public models, and service status (no key). Public models
+  are the Managed sell list — not what your key is allowed to call.
 - Runtime models and chat / messages / embeddings / images / responses /
   rerank / interactions (with `TONIA_API_KEY`)
-- Conversation history (member `app_session` key + plan entitlement)
+
+`client.models.list()` is what this key may call: the intersection of the
+Workspace roster and the bound profile's `model_allowlist` /
+`provider_allowlist`, resolved live on every request. Empty allowlist →
+empty list. `"*"` → every reachable model for those providers. Editing the
+profile (or Workspace Policies that merge keywords / fill omitted detection)
+changes the next call — no key rotation.
+
+```ts
+const { data } = await client.models.list();
+const ids = data.map((model) => model.id);
+await client.chat.completions.create({
+  model: ids[0],
+  messages: [{ role: "user", content: "Bonjour" }],
+});
+```
+
+Chat conversation history (`/v1/conversations*`) stays on the chat app —
+it is not part of this SDK. Store threads in your app and resend `messages[]`
+(see sdk-examples `09-saas-integrator`).
 
 For paths without a named helper, use `client.request(method, path, body)`.
 Only supported Pass path prefixes are accepted.
+
+## Images
+
+| Lab | Helper | Surface |
+| --- | --- | --- |
+| openai / xAI / StepFun | `client.images.generate` / `client.images.edit` | `POST /v1/images/generations` and `/edits` |
+| Gemini image SKUs (`gemini-*-image*`) | `client.interactions.create` | `POST /v1/interactions` |
+
+Gemini on Path A returns HTTP 400 `provider_requires_surface`
+(`required_surface: interactions`). Do not retry that call on `/v1/images/*`
+and do not send a Gemini image SKU to `/v1/chat/completions`.
+
+Generate (string `input`, `stream: false`). Pick a Gemini image id from
+`models.list()` — do not invent one:
+
+```ts
+const geminiImage = ids.find((id) => id.startsWith("gemini/") && /image/i.test(id));
+if (geminiImage) {
+  const image = await client.interactions.create({
+    model: geminiImage,
+    input: "Draw a red fox",
+    stream: false,
+  });
+}
+```
+
+Edit uses multimodal `input` parts. `data` is **raw base64**, not a data URL:
+
+```ts
+const edited = await client.interactions.create({
+  model: geminiImage,
+  stream: false,
+  input: [
+    { type: "text", text: "Make the fox sit" },
+    { type: "image", mime_type: "image/png", data: rawB64 },
+  ],
+});
+```
+
+The response is native Interactions JSON. Output images live on
+`model_output` steps (`type: image` or `mime_type` starting with `image/`).
+The SDK does not reshape that envelope to OpenAI `{data:[{b64_json}]}`.
+
+Image helpers abort after 300 seconds unless you set `timeout` on `Tonia`.
+Chat-vision / Path A **inputs** still use inline `data:image/png;base64,...`
+URLs; Pass refuses remote `http(s)` image links with
+`remote_image_url_not_supported`.
 
 ## Errors & content redaction
 
 HTTP 200 responses may still include `_tonia_policy_block` or
 `_tonia_entitlement_block` — the client raises typed errors. Content
 redaction is configured in the [tonia portal](https://portal.tonia.ca) by
-binding a key to a redact-mode profile. The SDK does not set a redact header.
+binding a key to a redact-mode profile (Policies → Profiles). The SDK does
+not set a redact header. Profile edits take effect on the next request.
+
+Image inputs on Path A and chat-vision must contain inline bytes, such as a
+`data:image/png;base64,...` URL. Pass does not fetch remote image links:
+`http(s)` image references return the non-retryable code
+`remote_image_url_not_supported`. Download and validate the image in your
+application before encoding it. Gemini Interactions **edit** parts use
+`mime_type` + raw `data` instead of a data URL — see **Images** above.
+
+## Rate limits and retries
+
+The SDK does not auto-retry. Honor `error.retryable` and
+`error.retryAfterSeconds` (from `Retry-After`).
+
+Admission 429 is `RateLimitError` (`type: rate_limit_error`,
+`code: admission_rate_limited`). Pass refuses the call immediately — it
+is not queued. `reason` and `scope` say which limit hit:
+
+| `reason` | `scope` |
+| --- | --- |
+| `rpm_per_key` | `key` |
+| `concurrency_per_key` | `key` |
+| `concurrency_per_tenant` | `tenant` (this workspace) |
+| `concurrency_global` | `global` |
+
+Per-key RPM defaults to 600. In-flight concurrency is a separate limit.
+A streaming call holds a slot until the stream ends.
+
+Do not treat every 429 the same:
+
+| What | Class | `code` | Retry? |
+| --- | --- | --- | --- |
+| Admission | `RateLimitError` | `admission_rate_limited` | Yes — wait `retryAfterSeconds` |
+| Monthly request quota | `EntitlementError` | `request_quota_exhausted` | Yes — wait until reset |
+| Budget | `EntitlementError` | `*_budget_exhausted` | No |
+| Audit contention | `ApiError` | `audit_tip_contention` | Yes — typically 1 second |
+| Managed credential | `ManagedCredentialUnavailableError` | `managed_credential_unavailable` | Yes — typically 60 seconds |
+
+On chat routes, quota and budget often arrive as HTTP 200 with
+`_tonia_entitlement_block`. The SDK still raises `EntitlementError`.
+Branch on the exception class and `error.code`, not HTTP status alone.
+
+```ts
+import { RateLimitError } from "@tonia/sdk";
+
+try {
+  await client.chat.completions.create({ /* … */ });
+} catch (err) {
+  if (err instanceof RateLimitError && err.retryable) {
+    const wait = err.retryAfterSeconds ?? 1;
+    // sleep `wait` seconds, then retry once
+  } else {
+    throw err;
+  }
+}
+```
 
 ## Develop
 
@@ -74,6 +212,8 @@ Install the portable [`tonia-sdk` skill](https://github.com/tonia-router/skills)
 gh skill install tonia-router/skills tonia-sdk
 ```
 
-Cursor: **Settings → Rules → Add Rule → Remote Rule (GitHub)** → `tonia-router/skills`.
+Cursor: copy the `tonia-sdk` folder (the directory that contains `SKILL.md`)
+to `.cursor/skills/tonia-sdk/` (project) or `~/.cursor/skills/tonia-sdk/`
+(user). That is an Agent Skill, not a Cursor Rule.
 
 Examples live in [`sdk-examples`](https://github.com/tonia-router/sdk-examples).
