@@ -348,13 +348,13 @@ class EmbeddingsResource {
 
 class ImagesResource {
   constructor(private readonly client: Tonia) {}
-  /** Path A generate (openai / xAI / StepFun). Gemini uses interactions.create. */
+  /** OpenAI-shaped generate. Gemini uses interactions.create. */
   generate(body: Record<string, unknown>) {
     return this.client.request("POST", "/v1/images/generations", body, {
       timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
     });
   }
-  /** Path A edit (openai / xAI / StepFun). Gemini uses interactions.create. */
+  /** OpenAI-shaped edit. Gemini uses interactions.create. */
   edit(body: Record<string, unknown>) {
     return this.client.request("POST", "/v1/images/edits", body, {
       timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
@@ -389,7 +389,7 @@ class RerankResource {
 class InteractionsResource {
   constructor(private readonly client: Tonia) {}
 
-  /** Gemini text and image SKUs. Native Interactions body, not Path A. */
+  /** Gemini text and image SKUs. Native Interactions body. */
   create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
   create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
   create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {

@@ -10,7 +10,7 @@ Official TypeScript / JavaScript client for [tonia Pass](https://pass.tonia.ca).
 TypeScript 6.0 (not 7 yet — 7.0 still lacks the stable programmatic API
 many tools need).
 
-**License:** Copyright 2026 tonia. Apache 2.0 — commercial use allowed.
+**License:** Copyright (c) 2026 tonia inc.. Apache 2.0 — commercial use allowed.
 Keep the copyright notice and `NOTICE` (attribution to tonia,
 https://tonia.ca) if you copy or redistribute this software.
 
@@ -93,7 +93,7 @@ Only supported Pass path prefixes are accepted.
 | openai / xAI / StepFun | `client.images.generate` / `client.images.edit` | `POST /v1/images/generations` and `/edits` |
 | Gemini image SKUs (`gemini-*-image*`) | `client.interactions.create` | `POST /v1/interactions` |
 
-Gemini on Path A returns HTTP 400 `provider_requires_surface`
+Gemini on `/v1/images/*` returns HTTP 400 `provider_requires_surface`
 (`required_surface: interactions`). Do not retry that call on `/v1/images/*`
 and do not send a Gemini image SKU to `/v1/chat/completions`.
 
@@ -129,7 +129,7 @@ The response is native Interactions JSON. Output images live on
 The SDK does not reshape that envelope to OpenAI `{data:[{b64_json}]}`.
 
 Image helpers abort after 300 seconds unless you set `timeout` on `Tonia`.
-Chat-vision / Path A **inputs** still use inline `data:image/png;base64,...`
+Chat-vision / `/v1/images` **inputs** still use inline `data:image/png;base64,...`
 URLs; Pass refuses remote `http(s)` image links with
 `remote_image_url_not_supported`.
 
@@ -141,7 +141,7 @@ redaction is configured in the [tonia portal](https://portal.tonia.ca) by
 binding a key to a redact-mode profile (Policies → Profiles). The SDK does
 not set a redact header. Profile edits take effect on the next request.
 
-Image inputs on Path A and chat-vision must contain inline bytes, such as a
+Image inputs on `/v1/images` and chat-vision must contain inline bytes, such as a
 `data:image/png;base64,...` URL. Pass does not fetch remote image links:
 `http(s)` image references return the non-retryable code
 `remote_image_url_not_supported`. Download and validate the image in your
@@ -200,7 +200,6 @@ try {
 
 ```bash
 npm install
-npm test
 npm run build
 ```
 

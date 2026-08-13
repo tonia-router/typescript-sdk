@@ -19,9 +19,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/**/*.test.ts",
-    "generate": "cd ../tonia-api && ./generate.sh --sdk-repos"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "repository": {
     "type": "git",
@@ -32,7 +30,6 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "tsx": "^4.20.0",
     "typescript": "~6.0.3"
   }
 }
