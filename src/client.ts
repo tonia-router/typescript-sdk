@@ -185,7 +185,7 @@ export class Tonia {
             headers: res.headers,
           });
         }
-        // Non-SSE success body (e.g. chat_200 carrier already raised above).
+        // Non-SSE success body (block carriers already raised above).
         return;
       }
 

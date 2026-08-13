@@ -20,6 +20,8 @@ jobs:
           node-version: "24"
       - run: npm install -g npm@latest
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
       - run: npm run build
       - run: npm pack
       - name: Create GitHub Release
@@ -29,16 +31,16 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           cat > /tmp/notes.md <<EOF
-          Official TypeScript client for tonia Pass (\`@tonia/sdk\`).
+          Official TypeScript client for tonia Pass (\`@tonia-router/sdk\`).
 
-          Install: \`npm add @tonia/sdk\`
+          Install: \`npm add @tonia-router/sdk\`
 
           Requires Node.js 22+. Apache 2.0, copyright 2026 tonia inc.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" tonia-sdk-*.tgz --clobber
+            gh release upload "$TAG" tonia-router-sdk-*.tgz --clobber
           else
-            gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md tonia-sdk-*.tgz
+            gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md tonia-router-sdk-*.tgz
           fi
       - name: Publish to npm
         run: npm publish --access public

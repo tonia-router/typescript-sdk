@@ -1,28 +1,24 @@
-# typescript-sdk
+# @tonia-router/sdk
 
 Official TypeScript / JavaScript client for [tonia Pass](https://pass.tonia.ca).
 
-**Package:** [`@tonia/sdk`](https://www.npmjs.com/package/@tonia/sdk)  
+**npm:** [`@tonia-router/sdk`](https://www.npmjs.com/package/@tonia-router/sdk)  
 **API contract:** [`tonia-api`](https://github.com/tonia-router/tonia-api)
 
-**Node.js:** 22 or newer (Maintenance LTS 22, Active LTS 24). Node 18 and
-20 are end-of-life and are not supported. The package is built with
-TypeScript 6.0 (not 7 yet — 7.0 still lacks the stable programmatic API
-many tools need).
+Requires Node.js 22 or newer (Maintenance LTS 22, Active LTS 24). Node 18 and
+20 are end-of-life. The package is built with TypeScript 6.0.
 
-**License:** Copyright (c) 2026 tonia inc.. Apache 2.0 — commercial use allowed.
-Keep the copyright notice and `NOTICE` (attribution to tonia,
-https://tonia.ca) if you copy or redistribute this software.
+**License:** Copyright (c) 2026 tonia inc. Apache 2.0. Keep the copyright
+notice and `NOTICE` (attribution to tonia, https://tonia.ca) if you copy or
+redistribute this software.
 
 ```bash
-# local-staging (packages not on npm yet):
-#   cd ../typescript-sdk && npm install && npm run build
-npm add ../typescript-sdk
-# published: npm add @tonia/sdk
+npm add @tonia-router/sdk
+# from a local checkout (build first): npm add ../typescript-sdk
 ```
 
 ```ts
-import { Tonia } from "@tonia/sdk";
+import { Tonia } from "@tonia-router/sdk";
 
 const client = new Tonia({
   apiKey: process.env.TONIA_API_KEY!,
@@ -35,14 +31,13 @@ const client = new Tonia({
 
 const { data } = await client.models.list();
 if (!data[0]) {
-  throw new Error("empty allowlist — do not guess a model id");
+  throw new Error("this key has no models; check the profile allowlist in the portal");
 }
 const completion = await client.chat.completions.create({
   model: data[0].id,
   messages: [{ role: "user", content: "Bonjour" }],
 });
 
-// Streaming (SSE) — do not buffer the full response
 for await (const event of client.chat.completions.stream({
   model: data[0].id,
   messages: [{ role: "user", content: "Bonjour" }],
@@ -65,23 +60,21 @@ client.lastLimits;
 
 `client.models.list()` is what this key may call: the intersection of the
 Workspace roster and the bound profile's `model_allowlist` /
-`provider_allowlist`, resolved live on every request. Empty allowlist →
-empty list. `"*"` → every reachable model for those providers. Editing the
-profile (or Workspace Policies that merge keywords / fill omitted detection)
-changes the next call — no key rotation.
+`provider_allowlist`, resolved live on every request. An empty allowlist
+returns an empty list. `"*"` returns every reachable model for those
+providers. Editing the profile (or Workspace Policies that merge keywords /
+fill omitted detection) changes the next call — no key rotation.
 
-```ts
-const { data } = await client.models.list();
-const ids = data.map((model) => model.id);
-await client.chat.completions.create({
-  model: ids[0],
-  messages: [{ role: "user", content: "Bonjour" }],
-});
-```
+That helper sends `Authorization: Bearer` and returns **OpenAI-shaped** ids
+(`openai/…`, `anthropic/claude-…`, `gemini/…`). The same `GET /v1/models`
+with `x-api-key` only (Anthropic SDKs, Claude Code) returns
+**Anthropic-shaped** ids (`claude-…`, no provider prefix).
+`messages.create` sends `x-api-key` but still takes the OpenAI-shaped id
+from `models.list()`. Do not mix the two id styles.
 
-Chat conversation history (`/v1/conversations*`) stays on the chat app —
-it is not part of this SDK. Store threads in your app and resend `messages[]`
-(see sdk-examples `09-saas-integrator`).
+Chat conversation history (`/v1/conversations*`) stays on the chat app.
+Store threads in your app and resend `messages[]` (see sdk-examples
+`09-saas-integrator`).
 
 For paths without a named helper, use `client.request(method, path, body)`.
 Only supported Pass path prefixes are accepted.
@@ -94,11 +87,11 @@ Only supported Pass path prefixes are accepted.
 | Gemini image SKUs (`gemini-*-image*`) | `client.interactions.create` | `POST /v1/interactions` |
 
 Gemini on `/v1/images/*` returns HTTP 400 `provider_requires_surface`
-(`required_surface: interactions`). Do not retry that call on `/v1/images/*`
-and do not send a Gemini image SKU to `/v1/chat/completions`.
+(`required_surface: interactions`). Retry on `/v1/interactions` instead.
+Do not send a Gemini image SKU to `/v1/chat/completions`.
 
 Generate (string `input`, `stream: false`). Pick a Gemini image id from
-`models.list()` — do not invent one:
+`models.list()`:
 
 ```ts
 const geminiImage = ids.find((id) => id.startsWith("gemini/") && /image/i.test(id));
@@ -133,7 +126,7 @@ Chat-vision / `/v1/images` **inputs** still use inline `data:image/png;base64,..
 URLs; Pass refuses remote `http(s)` image links with
 `remote_image_url_not_supported`.
 
-## Errors & content redaction
+## Errors and content redaction
 
 HTTP 200 responses may still include `_tonia_policy_block` or
 `_tonia_entitlement_block` — the client raises typed errors. Content
@@ -150,7 +143,7 @@ application before encoding it. Gemini Interactions **edit** parts use
 
 ## Rate limits and retries
 
-The SDK does not auto-retry. Honor `error.retryable` and
+The SDK does not auto-retry. Use `error.retryable` and
 `error.retryAfterSeconds` (from `Retry-After`).
 
 Admission 429 is `RateLimitError` (`type: rate_limit_error`,
@@ -167,7 +160,7 @@ is not queued. `reason` and `scope` say which limit hit:
 Per-key RPM defaults to 600. In-flight concurrency is a separate limit.
 A streaming call holds a slot until the stream ends.
 
-Do not treat every 429 the same:
+Not every 429 is admission:
 
 | What | Class | `code` | Retry? |
 | --- | --- | --- | --- |
@@ -182,7 +175,7 @@ On chat routes, quota and budget often arrive as HTTP 200 with
 Branch on the exception class and `error.code`, not HTTP status alone.
 
 ```ts
-import { RateLimitError } from "@tonia/sdk";
+import { RateLimitError } from "@tonia-router/sdk";
 
 try {
   await client.chat.completions.create({ /* … */ });
@@ -201,18 +194,16 @@ try {
 ```bash
 npm install
 npm run build
+npm test
 ```
 
-## Use with coding agents
+## Examples and coding tools
 
-Install the portable [`tonia-sdk` skill](https://github.com/tonia-router/skills):
+Cookbook recipes: [`sdk-examples`](https://github.com/tonia-router/sdk-examples).
+
+To point Cursor, Claude Code, or Codex at Pass, install the
+[`tonia-sdk` skill](https://github.com/tonia-router/skills):
 
 ```bash
 gh skill install tonia-router/skills tonia-sdk
 ```
-
-Cursor: copy the `tonia-sdk` folder (the directory that contains `SKILL.md`)
-to `.cursor/skills/tonia-sdk/` (project) or `~/.cursor/skills/tonia-sdk/`
-(user). That is an Agent Skill, not a Cursor Rule.
-
-Examples live in [`sdk-examples`](https://github.com/tonia-router/sdk-examples).
