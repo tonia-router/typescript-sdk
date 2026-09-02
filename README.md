@@ -14,6 +14,8 @@ redistribute this software.
 
 ```bash
 npm add @tonia-router/sdk
+# until npm is live:
+# npm add https://github.com/tonia-router/typescript-sdk/releases/download/v0.3.0/tonia-router-sdk-0.3.0.tgz
 # from a local checkout (build first): npm add ../typescript-sdk
 ```
 
