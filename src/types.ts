@@ -28,10 +28,8 @@ export type CatalogueOffer = {
   label: string;
   credential_mode: string;
   public: boolean;
-  trial: Record<string, unknown>;
   entitlement_template: EntitlementTemplate;
   components: Record<string, unknown>[];
-  discounts: Record<string, unknown>;
   managed_credit_topup_amounts_cad_cents?: number[];
 };
 

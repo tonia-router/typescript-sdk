@@ -20,7 +20,7 @@ export type AuthStyle = "bearer" | "api_key";
 /** Image / interactions helpers abort after this many ms when `timeout` is unset. */
 export const IMAGE_TIMEOUT_MS = 300_000;
 
-export const SDK_VERSION = "0.2.1";
+export const SDK_VERSION = "0.3.0";
 export const SDK_USER_AGENT = `tonia-sdk-ts/${SDK_VERSION}`;
 
 export interface ToniaOptions {
@@ -76,6 +76,7 @@ export class Tonia {
   readonly messages: MessagesResource;
   readonly embeddings: EmbeddingsResource;
   readonly images: ImagesResource;
+  readonly audio: AudioResource;
   readonly responses: ResponsesResource;
   readonly rerank: RerankResource;
   readonly interactions: InteractionsResource;
@@ -96,6 +97,7 @@ export class Tonia {
     this.messages = new MessagesResource(this);
     this.embeddings = new EmbeddingsResource(this);
     this.images = new ImagesResource(this);
+    this.audio = new AudioResource(this);
     this.responses = new ResponsesResource(this);
     this.rerank = new RerankResource(this);
     this.interactions = new InteractionsResource(this);
@@ -122,6 +124,31 @@ export class Tonia {
     opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
   ): Promise<T> {
     const res = await this.rawFetch(method, path, body, opts);
+    const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+    const binary =
+      contentType.startsWith("audio/") || contentType.startsWith("application/octet-stream");
+    if (binary) {
+      if (!res.ok) {
+        const text = await res.text();
+        let parsed: unknown = undefined;
+        if (text) {
+          try {
+            parsed = JSON.parse(text) as unknown;
+          } catch {
+            parsed = text;
+          }
+        }
+        raiseFromResponseBody(parsed, { status: res.status, headers: res.headers });
+        throw errorFromHttpFallback(res.status, {
+          body: parsed,
+          headers: res.headers,
+        });
+      }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      this.lastLimits = limitsFromHeaders(res.headers);
+      return bytes as T;
+    }
+
     const text = await res.text();
     let parsed: unknown = undefined;
     if (text) {
@@ -230,8 +257,16 @@ export class Tonia {
       }
     }
 
-    let payload: string | undefined;
-    if (body !== undefined) {
+    let payload: BodyInit | undefined;
+    if (body instanceof FormData) {
+      // fetch must set the multipart boundary — do not JSON.stringify.
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === "content-type") {
+          delete headers[key];
+        }
+      }
+      payload = body;
+    } else if (body !== undefined) {
       headers["Content-Type"] = headers["Content-Type"] ?? "application/json";
       payload = JSON.stringify(body);
     }
@@ -359,6 +394,91 @@ class ImagesResource {
     return this.client.request("POST", "/v1/images/edits", body, {
       timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
     });
+  }
+}
+
+class AudioSpeechResource {
+  constructor(private readonly client: Tonia) {}
+  /** OpenAI-shaped TTS. Returns audio bytes. */
+  create(body: Record<string, unknown>) {
+    return this.client.request<Uint8Array>("POST", "/v1/audio/speech", body, {
+      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      headers: { Accept: "application/octet-stream, audio/*, application/json" },
+    });
+  }
+}
+
+type AudioTranscriptionFile = Blob | File | Uint8Array | ArrayBuffer;
+
+function audioMime(filename: string): string {
+  const suffix = filename.toLowerCase().slice(filename.lastIndexOf("."));
+  if (suffix === ".wav" || suffix === ".wave") return "audio/wav";
+  if (suffix === ".mp3" || suffix === ".mpga") return "audio/mpeg";
+  if (suffix === ".m4a" || suffix === ".mp4") return "audio/mp4";
+  if (suffix === ".webm") return "audio/webm";
+  if (suffix === ".ogg" || suffix === ".oga") return "audio/ogg";
+  if (suffix === ".flac") return "audio/flac";
+  return "application/octet-stream";
+}
+
+function transcriptionFileBlob(
+  file: AudioTranscriptionFile | string,
+  filename?: string,
+): { blob: Blob; filename: string } {
+  if (typeof file === "string" && file.trim().toLowerCase().startsWith("data:")) {
+    throw new TypeError(
+      "file must be a Blob, File, Uint8Array, or ArrayBuffer — not a data URI. Send the audio file itself.",
+    );
+  }
+  if (file instanceof File) {
+    return { blob: file, filename: filename || file.name || "audio.wav" };
+  }
+  if (file instanceof Blob) {
+    return { blob: file, filename: filename || "audio.wav" };
+  }
+  if (file instanceof ArrayBuffer) {
+    const name = filename || "audio.wav";
+    return { blob: new Blob([file], { type: audioMime(name) }), filename: name };
+  }
+  if (file instanceof Uint8Array) {
+    const copy = new Uint8Array(file.byteLength);
+    copy.set(file);
+    const name = filename || "audio.wav";
+    return { blob: new Blob([copy], { type: audioMime(name) }), filename: name };
+  }
+  throw new TypeError("file must be a Blob, File, Uint8Array, or ArrayBuffer");
+}
+
+class AudioTranscriptionsResource {
+  constructor(private readonly client: Tonia) {}
+  /** OpenAI-shaped STT. Multipart `file` + `model`. Returns JSON. */
+  create(body: {
+    model: string;
+    file: AudioTranscriptionFile;
+    filename?: string;
+    [key: string]: unknown;
+  }) {
+    const { model, file, filename, ...fields } = body;
+    const { blob, filename: name } = transcriptionFileBlob(file, filename);
+    const form = new FormData();
+    form.append("file", blob, name);
+    form.append("model", model);
+    for (const [key, value] of Object.entries(fields)) {
+      if (value == null) continue;
+      form.append(key, typeof value === "string" ? value : String(value));
+    }
+    return this.client.request("POST", "/v1/audio/transcriptions", form, {
+      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+    });
+  }
+}
+
+class AudioResource {
+  readonly speech: AudioSpeechResource;
+  readonly transcriptions: AudioTranscriptionsResource;
+  constructor(client: Tonia) {
+    this.speech = new AudioSpeechResource(client);
+    this.transcriptions = new AudioTranscriptionsResource(client);
   }
 }
 

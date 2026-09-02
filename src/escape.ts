@@ -9,6 +9,7 @@ export const ESCAPE_HATCH_PREFIXES = [
   "/v1/messages",
   "/v1/embeddings",
   "/v1/images/",
+  "/v1/audio/",
   "/v1/responses",
   "/v1/rerank",
   "/v1/interactions",

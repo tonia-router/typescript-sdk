@@ -55,8 +55,8 @@ client.lastLimits;
 
 - Public catalogue, public models, and service status (no key). Public models
   are the Managed sell list — not what your key is allowed to call.
-- Runtime models and chat / messages / embeddings / images / responses /
-  rerank / interactions (with `TONIA_API_KEY`)
+- Runtime models and chat / messages / embeddings / images / audio.speech /
+  audio.transcriptions / responses / rerank / interactions (with `TONIA_API_KEY`)
 
 `client.models.list()` is what this key may call: the intersection of the
 Workspace roster and the bound profile's `model_allowlist` /
@@ -78,6 +78,38 @@ Store threads in your app and resend `messages[]` (see sdk-examples
 
 For paths without a named helper, use `client.request(method, path, body)`.
 Only supported Pass path prefixes are accepted.
+
+## Audio
+
+`client.audio.speech.create` calls `POST /v1/audio/speech` and returns
+`Uint8Array` bytes (`{input, voice}`).
+`client.audio.transcriptions.create` calls `POST /v1/audio/transcriptions`
+as multipart with a real file (not a data URI) and returns JSON
+(`{text: ...}`). The workspace must have audio turned on (portal `/dlp`).
+Off returns HTTP 403 `audio_not_in_plan`.
+
+Gemini token TTS/STT (`gemini-*-tts*`, `gemini-*-transcribe`) uses
+`client.interactions.create` / `POST /v1/interactions`. Do **not** call
+`audio.speech` or `audio.transcriptions` for those ids.
+
+```ts
+// Use an id from GET /v1/models with audio_speech / audio_transcription.
+// Sold examples: mistral/voxtral-mini-tts-2603, openai/gpt-transcribe.
+// Never gpt-4o-mini-tts. Gemini token TTS/STT uses interactions.create.
+const speech = await client.audio.speech.create({
+  model: "mistral/voxtral-mini-tts-2603",
+  input: "Bonjour Tonia",
+  voice: "alloy",
+});
+
+import { readFile } from "node:fs/promises";
+
+const transcript = await client.audio.transcriptions.create({
+  model: "gpt-transcribe",
+  file: await readFile("clip.wav"),
+  filename: "clip.wav",
+});
+```
 
 ## Images
 
@@ -166,6 +198,9 @@ Not every 429 is admission:
 | --- | --- | --- | --- |
 | Admission | `RateLimitError` | `admission_rate_limited` | Yes — wait `retryAfterSeconds` |
 | Monthly request quota | `EntitlementError` | `request_quota_exhausted` | Yes — wait until reset |
+| Included-model token quota | `EntitlementError` | `campaign_token_quota_exhausted` | Yes — wait until reset |
+| Included-model per-request cap | `EntitlementError` | `campaign_token_per_request_exceeded` | No |
+| Included-model exhausted | `EntitlementError` | `campaign_cogs_ceiling_exhausted` | No |
 | Budget | `EntitlementError` | `*_budget_exhausted` | No |
 | Audit contention | `ApiError` | `audit_tip_contention` | Yes — typically 1 second |
 | Managed credential | `ManagedCredentialUnavailableError` | `managed_credential_unavailable` | Yes — typically 60 seconds |

@@ -33,6 +33,12 @@ jobs:
           cat > /tmp/notes.md <<EOF
           Official TypeScript client for tonia Pass (\`@tonia-router/sdk\`).
 
+          Audio support: \`audio.speech.create\` (TTS) and
+          \`audio.transcriptions.create\` (multipart STT). Gemini token
+          TTS/STT uses \`interactions.create\`. Sold examples:
+          \`mistral/voxtral-mini-tts-2603\`, \`openai/gpt-transcribe\`.
+          Workspace audio must be on (portal \`/dlp\`).
+
           Install: \`npm add @tonia-router/sdk\`
 
           Requires Node.js 22+. Apache 2.0, copyright 2026 tonia inc.

@@ -289,6 +289,12 @@ test("all named nonstream helpers stay on the locked public surface", async () =
   await client.embeddings.create({ model: "embed", input: "hello" });
   await client.images.generate({ model: "image", prompt: "hello" });
   await client.images.edit({ model: "image", prompt: "hello" });
+  await client.audio.speech.create({ model: "gpt-4o-mini-tts", input: "hello", voice: "alloy" });
+  await client.audio.transcriptions.create({
+    model: "gpt-transcribe",
+    file: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+    filename: "clip.wav",
+  });
   await client.responses.create({ model: "gpt", input: "hello" });
   await client.rerank.create({ model: "rerank", query: "a", documents: ["b"] });
   await client.interactions.create({ model: "gpt", input: "hello" });
@@ -300,6 +306,8 @@ test("all named nonstream helpers stay on the locked public surface", async () =
     "/v1/embeddings",
     "/v1/images/generations",
     "/v1/images/edits",
+    "/v1/audio/speech",
+    "/v1/audio/transcriptions",
     "/v1/responses",
     "/v1/rerank",
     "/v1/interactions",
@@ -444,4 +452,59 @@ test("gemini image SKU on /v1/images maps provider_requires_surface", async () =
       (error.body as { error?: { required_surface?: string } })?.error
         ?.required_surface === "interactions",
   );
+});
+
+test("audio.speech.create returns bytes", async () => {
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async (input, init) => {
+      assert.match(String(input), /\/v1\/audio\/speech$/);
+      const headers = new Headers(init?.headers);
+      assert.match(headers.get("accept") ?? "", /octet-stream/);
+      return new Response(new Uint8Array([0x49, 0x44, 0x33]), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      });
+    },
+  });
+  const audio = await client.audio.speech.create({
+    model: "gpt-4o-mini-tts",
+    input: "Bonjour",
+    voice: "alloy",
+  });
+  assert.ok(audio instanceof Uint8Array);
+  assert.deepEqual(Array.from(audio), [0x49, 0x44, 0x33]);
+});
+
+const tinySttWav = Uint8Array.from([
+  0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
+  0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x40, 0x1f, 0x00, 0x00, 0x80, 0x3e, 0x00, 0x00,
+  0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+]);
+
+test("audio.transcriptions.create sends multipart and returns json", async () => {
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async (input, init) => {
+      assert.match(String(input), /\/v1\/audio\/transcriptions$/);
+      assert.ok(init?.body instanceof FormData);
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get("content-type"), null);
+      const form = init.body as FormData;
+      assert.equal(form.get("model"), "gpt-transcribe");
+      const uploaded = form.get("file");
+      assert.ok(uploaded instanceof Blob);
+      if (uploaded instanceof File) {
+        assert.equal(uploaded.name, "clip.wav");
+      }
+      return Response.json({ text: "bonjour" });
+    },
+  });
+  const out = await client.audio.transcriptions.create({
+    model: "gpt-transcribe",
+    file: tinySttWav,
+    filename: "clip.wav",
+  });
+  assert.deepEqual(out, { text: "bonjour" });
 });

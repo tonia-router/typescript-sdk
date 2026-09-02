@@ -1,7 +1,7 @@
 {
   "name": "@tonia-router/sdk",
-  "version": "0.2.1",
-  "description": "Official TypeScript client for tonia Pass",
+  "version": "0.3.0",
+  "description": "Official TypeScript client for tonia Pass, including speech and transcription",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
