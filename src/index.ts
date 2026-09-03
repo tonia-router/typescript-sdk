@@ -28,6 +28,7 @@ export type {
   EntitlementTemplate,
   PublicCatalogue,
   PublicChannel,
+  CustomerSurface,
   PublicModel,
   PublicModelList,
   ReasoningDescriptor,

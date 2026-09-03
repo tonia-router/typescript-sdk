@@ -51,6 +51,14 @@ export type ReasoningDescriptor = {
   default: string;
 };
 
+export type CustomerSurface = {
+  family: "text" | "image" | "speech" | "transcription";
+  path: string;
+  sdk: string;
+  body: string;
+  edit_path: string | null;
+};
+
 export type PublicModel = {
   id: string;
   provider: string;
@@ -74,6 +82,7 @@ export type PublicModel = {
   uptime?: Record<string, unknown> | null;
   activity?: Record<string, unknown> | null;
   tools?: Record<string, unknown> | null;
+  surface?: CustomerSurface;
 };
 
 export type PublicModelList = {
@@ -90,6 +99,7 @@ export type RuntimeModel = {
   modalities?: Record<string, unknown>;
   reasoning?: ReasoningDescriptor;
   pricing?: Record<string, unknown>;
+  surface?: CustomerSurface;
 };
 
 export type RuntimeModelList = {
