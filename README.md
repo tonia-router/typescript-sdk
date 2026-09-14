@@ -110,6 +110,16 @@ const live = await client.realtime.connect({
   transcripts: true,
 });
 live.sendAudioAppend(pcm, "audio/pcm");
+
+// Live STT (PCM16 LE 16 kHz). No spoken reply.
+const captions = await client.realtime.connect({
+  provider: "gemini",
+  model: "gemini-3.5-transcribe-live",
+  mode: "native",
+  transcripts: true,
+});
+captions.sendAudioAppend(pcm, "audio/pcm;rate=16000");
+captions.sendAudioCommit(undefined, "audio/pcm;rate=16000");
 ```
 
 ## Audio
