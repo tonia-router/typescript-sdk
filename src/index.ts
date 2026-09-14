@@ -13,6 +13,7 @@ export {
   EntitlementError,
   InvalidRequestError,
   ByokKeyMissingError,
+  AgentBlockError,
   PolicyBlockError,
   TenantUpstreamBlockedError,
   ManagedCredentialUnavailableError,
@@ -36,3 +37,15 @@ export type {
   RuntimeModelList,
 } from "./types.js";
 export { feedSse, type SseEvent } from "./stream.js";
+export {
+  FIRST_HOP_MODEL,
+  FIRST_HOP_PROVIDER,
+  REALTIME_PATH,
+  TURN_TYPES,
+  TERMINAL_TURN_TYPES,
+  RealtimeSession,
+  connectRealtime,
+  realtimeConnectUrl,
+  realtimeWsUrl,
+  type RealtimeConnectOptions,
+} from "./realtime.js";

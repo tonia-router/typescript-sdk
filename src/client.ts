@@ -7,6 +7,11 @@ import {
 } from "./errors.js";
 import { limitsFromHeaders, type LimitInfo } from "./limits.js";
 import { iterateSse, type SseEvent } from "./stream.js";
+import {
+  connectRealtime,
+  type RealtimeConnectOptions,
+  type RealtimeSession,
+} from "./realtime.js";
 import type {
   PublicCatalogue,
   PublicModel,
@@ -38,6 +43,8 @@ export interface ToniaOptions {
   timeout?: number;
   /** Override fetch (tests). */
   fetch?: typeof fetch;
+  /** Hosted default is derived from `baseURL` (`:8443` stays). Local `:8444` → `:8448`. */
+  realtimeURL?: string;
 }
 
 function defaultBaseURL(): string {
@@ -47,6 +54,12 @@ function defaultBaseURL(): string {
 function headerHas(headers: Record<string, string>, name: string): boolean {
   const lower = name.toLowerCase();
   return Object.keys(headers).some((key) => key.toLowerCase() === lower);
+}
+
+function envRealtimeUrl(): string | undefined {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env;
+  return env?.TONIA_REALTIME_URL?.trim() || undefined;
 }
 
 function resolveApiKey(explicit?: string): string | undefined {
@@ -80,6 +93,8 @@ export class Tonia {
   readonly responses: ResponsesResource;
   readonly rerank: RerankResource;
   readonly interactions: InteractionsResource;
+  readonly realtime: RealtimeResource;
+  readonly realtimeURL?: string;
 
   constructor(options: ToniaOptions = {}) {
     this.baseURL = (options.baseURL ?? defaultBaseURL()).replace(/\/+$/, "");
@@ -87,6 +102,7 @@ export class Tonia {
     this.apiKey = resolveApiKey(options.apiKey);
     this.defaultHeaders = { ...(options.defaultHeaders ?? {}) };
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.realtimeURL = options.realtimeURL ?? envRealtimeUrl();
 
     this.catalogue = new CatalogueResource(this);
     this.publicModels = new PublicModelsResource(this);
@@ -101,6 +117,17 @@ export class Tonia {
     this.responses = new ResponsesResource(this);
     this.rerank = new RerankResource(this);
     this.interactions = new InteractionsResource(this);
+    this.realtime = new RealtimeResource(this);
+  }
+
+  requireApiKey(): string {
+    if (!this.apiKey) {
+      throw new AuthenticationError("Missing TONIA_API_KEY", {
+        code: "missing_bearer",
+        retryable: false,
+      });
+    }
+    return this.apiKey;
   }
 
   /**
@@ -503,6 +530,21 @@ class RerankResource {
   constructor(private readonly client: Tonia) {}
   create(body: Record<string, unknown>) {
     return this.client.request("POST", "/v1/rerank", body);
+  }
+}
+
+class RealtimeResource {
+  constructor(private readonly client: Tonia) {}
+
+  /** Open tonia wss /v1/realtime. HTTP request() still rejects this path. */
+  connect(options: RealtimeConnectOptions = {}): Promise<RealtimeSession> {
+    return connectRealtime({
+      apiKey: this.client.requireApiKey(),
+      baseURL: this.client.baseURL,
+      realtimeURL: this.client.realtimeURL,
+      timeoutMs: this.client.timeout,
+      ...options,
+    });
   }
 }
 

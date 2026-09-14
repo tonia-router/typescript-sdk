@@ -9,6 +9,7 @@ import {
   errorFromHttpFallback,
   InvalidRequestError,
   ManagedCredentialUnavailableError,
+  AgentBlockError,
   PolicyBlockError,
   raiseFromResponseBody,
   raiseFromStreamHeaders,
@@ -53,6 +54,7 @@ const cases = [
   ["invalid_request_error", InvalidRequestError],
   ["byok_key_missing", ByokKeyMissingError],
   ["policy_block", PolicyBlockError],
+  ["agent_block", AgentBlockError],
   ["tenant_upstream_blocked", TenantUpstreamBlockedError],
   ["managed_credential_unavailable", ManagedCredentialUnavailableError],
   ["rate_limit_error", RateLimitError],
@@ -91,6 +93,44 @@ test("stream policy header raises before any body is needed", () => {
     (error) =>
       error instanceof PolicyBlockError &&
       error.code === "regulated_content_detected" &&
+      error.retryable === false,
+  );
+});
+
+test("HTTP 200 agent carrier preserves code and capability", () => {
+  assert.throws(
+    () =>
+      raiseFromResponseBody(
+        {
+          _tonia_agent_block: {
+            code: "tool_calls_disabled_by_profile",
+            capability: "tool_calls",
+            retryable: false,
+          },
+        },
+        { status: 200 },
+      ),
+    (error) =>
+      error instanceof AgentBlockError &&
+      error.code === "tool_calls_disabled_by_profile" &&
+      error.capability === "tool_calls" &&
+      error.retryable === false,
+  );
+});
+
+test("stream agent header raises before any body is needed", () => {
+  assert.throws(
+    () =>
+      raiseFromStreamHeaders(
+        new Headers({
+          "x-tonia-agent-block": "tool_calls_disabled_by_profile",
+          "x-tonia-agent-capability": "tool_calls",
+        }),
+      ),
+    (error) =>
+      error instanceof AgentBlockError &&
+      error.code === "tool_calls_disabled_by_profile" &&
+      error.capability === "tool_calls" &&
       error.retryable === false,
   );
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SDK_USER_AGENT, Tonia } from "./client.js";
 import {
+  AgentBlockError,
   AuthenticationError,
   EntitlementError,
   InvalidRequestError,
@@ -142,6 +143,45 @@ test("chat does not abort by default", async () => {
   assert.equal(signal, undefined);
 });
 
+test("chat and messages forward prompt-cache fields and usage", async () => {
+  const seen: Record<string, unknown> = {};
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    defaultHeaders: { "x-session-id": "sdk-cache-session" },
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      seen[url.pathname] = JSON.parse(String(init?.body || "{}"));
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get("x-session-id"), "sdk-cache-session");
+      return Response.json({
+        usage: { prompt_tokens_details: { cached_tokens: 8 } },
+      });
+    },
+  });
+  const chat = (await client.chat.completions.create({
+    model: "gpt-5.4-nano",
+    messages: [{ role: "user", content: "ok" }],
+    prompt_cache_key: "caller-key",
+  })) as { usage: { prompt_tokens_details: { cached_tokens: number } } };
+  const messages = (await client.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 8,
+    system: "pad",
+    cache_control: { type: "ephemeral" },
+    messages: [{ role: "user", content: "ok" }],
+  })) as { usage: { prompt_tokens_details: { cached_tokens: number } } };
+  const chatBody = seen["/v1/chat/completions"] as {
+    prompt_cache_key: string;
+  };
+  const messagesBody = seen["/v1/messages"] as {
+    cache_control: { type: string };
+  };
+  assert.equal(chatBody.prompt_cache_key, "caller-key");
+  assert.equal(messagesBody.cache_control.type, "ephemeral");
+  assert.equal(chat.usage.prompt_tokens_details.cached_tokens, 8);
+  assert.equal(messages.usage.prompt_tokens_details.cached_tokens, 8);
+});
+
 test("HTTP 200 policy carrier raises typed error", async () => {
   const client = new Tonia({
     apiKey: "tonia_test",
@@ -224,6 +264,39 @@ test("stream raises on policy header before yielding chunks", async () => {
       yielded += 1;
     }
   }, PolicyBlockError);
+  assert.equal(yielded, 0);
+});
+
+test("stream raises on agent header before yielding chunks", async () => {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        encoder.encode('data: {"choices":[{"delta":{"content":"blocked"}}]}\n\n'),
+      );
+      controller.close();
+    },
+  });
+  let yielded = 0;
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async () =>
+      new Response(body, {
+        headers: {
+          "content-type": "text/event-stream",
+          "x-tonia-agent-block": "tool_calls_disabled_by_profile",
+          "x-tonia-agent-capability": "tool_calls",
+        },
+      }),
+  });
+  await assert.rejects(async () => {
+    for await (const _event of client.chat.completions.stream({
+      model: "gpt-test",
+      messages: [],
+    })) {
+      yielded += 1;
+    }
+  }, AgentBlockError);
   assert.equal(yielded, 0);
 });
 

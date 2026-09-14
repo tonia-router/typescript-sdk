@@ -7,6 +7,7 @@ export type ToniaErrorType =
   | "invalid_request_error"
   | "byok_key_missing"
   | "policy_block"
+  | "agent_block"
   | "tenant_upstream_blocked"
   | "managed_credential_unavailable"
   | "rate_limit_error"
@@ -147,6 +148,24 @@ export class PolicyBlockError extends ToniaError {
   }
 }
 
+export class AgentBlockError extends ToniaError {
+  readonly agentBlock?: unknown;
+  readonly capability?: string;
+
+  constructor(
+    message: string,
+    opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type"> & {
+      agentBlock?: unknown;
+      capability?: string;
+    },
+  ) {
+    super(message, { ...opts, type: "agent_block" });
+    this.name = "AgentBlockError";
+    this.agentBlock = opts.agentBlock;
+    this.capability = opts.capability;
+  }
+}
+
 export class TenantUpstreamBlockedError extends ToniaError {
   constructor(message: string, opts: Omit<ConstructorParameters<typeof ToniaError>[1], "type">) {
     super(message, { ...opts, type: "tenant_upstream_blocked" });
@@ -235,6 +254,11 @@ export function errorFromStructured(
       return new ByokKeyMissingError(message, base);
     case "policy_block":
       return new PolicyBlockError(message, base);
+    case "agent_block":
+      return new AgentBlockError(message, {
+        ...base,
+        capability: typeof err.capability === "string" ? err.capability : undefined,
+      });
     case "tenant_upstream_blocked":
       return new TenantUpstreamBlockedError(message, base);
     case "managed_credential_unavailable":
@@ -301,6 +325,18 @@ export function raiseFromStreamHeaders(headers?: Headers): void {
       entitlementBlock: { code: entitlement },
     });
   }
+  const agent = headers.get("x-tonia-agent-block");
+  if (agent) {
+    const capability = headers.get("x-tonia-agent-capability") ?? undefined;
+    throw new AgentBlockError("tonia agent block", {
+      code: agent,
+      capability,
+      retryable: false,
+      status: 200,
+      headers,
+      agentBlock: { code: agent, capability },
+    });
+  }
 }
 
 /** Raise typed errors for HTTP error bodies and success-body carriers. */
@@ -325,6 +361,23 @@ export function raiseFromResponseBody(
         body,
         headers: opts.headers,
         policyBlock: carrier,
+      });
+    }
+    if ("_tonia_agent_block" in obj) {
+      const carrier =
+        obj._tonia_agent_block && typeof obj._tonia_agent_block === "object"
+          ? (obj._tonia_agent_block as Record<string, unknown>)
+          : {};
+      throw new AgentBlockError("tonia agent block", {
+        code: typeof carrier.code === "string" ? carrier.code : undefined,
+        capability:
+          typeof carrier.capability === "string" ? carrier.capability : undefined,
+        retryable:
+          typeof carrier.retryable === "boolean" ? carrier.retryable : false,
+        status: 200,
+        body,
+        headers: opts.headers,
+        agentBlock: carrier,
       });
     }
     if ("_tonia_entitlement_block" in obj) {
