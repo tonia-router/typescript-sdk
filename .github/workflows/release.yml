@@ -34,13 +34,16 @@ jobs:
           cat > /tmp/notes.md <<EOF
           Official TypeScript client for tonia Pass (\`@tonia-router/sdk\`).
 
+          Stream cancel: pass \`{ signal }\` into \`.stream()\` / \`.create()\`.
+          \`AbortController.abort()\` or \`break\` hangs up the Pass socket.
+
           Audio support: \`audio.speech.create\` (TTS) and
           \`audio.transcriptions.create\` (multipart STT). Gemini token
           TTS/STT uses \`interactions.create\`. Sold examples:
           \`mistral/voxtral-mini-tts-2603\`, \`openai/gpt-transcribe\`.
           Workspace audio must be on (portal \`/dlp\`).
 
-          Install: \`npm add @tonia-router/sdk\`
+          Install until npm: \`npm add https://github.com/tonia-router/typescript-sdk/releases/download/${TAG}/tonia-router-sdk-0.3.1.tgz\`
 
           Requires Node.js 22+. Apache 2.0, copyright 2026 tonia inc.
           EOF

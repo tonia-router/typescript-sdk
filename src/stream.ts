@@ -53,16 +53,39 @@ export function raiseIfStreamCarrier(payload: unknown): void {
   }
 }
 
+function abortError(signal?: AbortSignal): DOMException {
+  const reason = signal?.reason;
+  if (reason instanceof DOMException) return reason;
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
 export async function* iterateSse(
   body: ReadableStream<Uint8Array> | null,
+  signal?: AbortSignal,
 ): AsyncGenerator<SseEvent, void, unknown> {
   if (!body) return;
   const reader = body.getReader();
+  const onAbort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
   try {
+    if (signal?.aborted) {
+      await reader.cancel().catch(() => {});
+      throw abortError(signal);
+    }
     while (true) {
-      const { done, value } = await reader.read();
+      let done: boolean;
+      let value: Uint8Array | undefined;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (err) {
+        if (signal?.aborted) throw abortError(signal);
+        throw err;
+      }
+      if (signal?.aborted) throw abortError(signal);
       if (done) break;
       const { events, rest } = feedSse(buffer, decoder.decode(value, { stream: true }));
       buffer = rest;
@@ -80,6 +103,16 @@ export async function* iterateSse(
       }
     }
   } finally {
-    reader.releaseLock();
+    signal?.removeEventListener("abort", onAbort);
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      /* cancel() already released */
+    }
   }
 }

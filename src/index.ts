@@ -5,6 +5,7 @@ export {
   SDK_VERSION,
   type ToniaOptions,
   type AuthStyle,
+  type CallOptions,
 } from "./client.js";
 export {
   ToniaError,

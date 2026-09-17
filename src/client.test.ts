@@ -199,6 +199,68 @@ test("HTTP 200 policy carrier raises typed error", async () => {
   );
 });
 
+test("stream abort signal hangs up and cancels the body", async () => {
+  let cancelled = false;
+  let fetchSignal: AbortSignal | undefined;
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"o"}}]}\n\n'));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async (_input, init) => {
+      fetchSignal = init?.signal ?? undefined;
+      return new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  const ac = new AbortController();
+  const stream = client.chat.completions.stream(
+    { model: "gpt-test", messages: [] },
+    { signal: ac.signal },
+  );
+  const first = await stream.next();
+  assert.equal(first.done, false);
+  assert.equal(fetchSignal?.aborted, false);
+  ac.abort();
+  await assert.rejects(() => stream.next(), (error: unknown) => {
+    return error instanceof DOMException && error.name === "AbortError";
+  });
+  assert.equal(cancelled, true);
+  assert.equal(fetchSignal?.aborted, true);
+});
+
+test("breaking a stream cancels the body reader", async () => {
+  let cancelled = false;
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"o"}}]}\n\n'));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async () =>
+      new Response(body, { headers: { "content-type": "text/event-stream" } }),
+  });
+  for await (const _event of client.chat.completions.stream({
+    model: "gpt-test",
+    messages: [],
+  })) {
+    break;
+  }
+  assert.equal(cancelled, true);
+});
+
 test("stream yields incremental events and terminal marker", async () => {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({

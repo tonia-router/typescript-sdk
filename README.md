@@ -15,7 +15,7 @@ redistribute this software.
 ```bash
 npm add @tonia-router/sdk
 # until npm is live:
-# npm add https://github.com/tonia-router/typescript-sdk/releases/download/v0.3.0/tonia-router-sdk-0.3.0.tgz
+# npm add https://github.com/tonia-router/typescript-sdk/releases/download/v0.3.1/tonia-router-sdk-0.3.1.tgz
 # from a local checkout (build first): npm add ../typescript-sdk
 ```
 
@@ -40,14 +40,19 @@ const completion = await client.chat.completions.create({
   messages: [{ role: "user", content: "Bonjour" }],
 });
 
-for await (const event of client.chat.completions.stream({
-  model: data[0].id,
-  messages: [{ role: "user", content: "Bonjour" }],
-})) {
+const ac = new AbortController();
+for await (const event of client.chat.completions.stream(
+  {
+    model: data[0].id,
+    messages: [{ role: "user", content: "Bonjour" }],
+  },
+  { signal: ac.signal },
+)) {
   if (event.json) {
     // provider-shaped chunk
   }
 }
+// Hang up: `ac.abort()`, or `break` the loop. Same as closing the socket.
 
 // Soft-limit warnings from the last successful call (when present)
 client.lastLimits;

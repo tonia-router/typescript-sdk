@@ -25,8 +25,30 @@ export type AuthStyle = "bearer" | "api_key";
 /** Image / interactions helpers abort after this many ms when `timeout` is unset. */
 export const IMAGE_TIMEOUT_MS = 300_000;
 
-export const SDK_VERSION = "0.3.0";
+export const SDK_VERSION = "0.3.1";
 export const SDK_USER_AGENT = `tonia-sdk-ts/${SDK_VERSION}`;
+
+export type CallOptions = {
+  auth?: AuthStyle | "none";
+  headers?: Record<string, string>;
+  timeout?: number;
+  /** Hang up the Pass socket. Same as breaking a `for await` loop. */
+  signal?: AbortSignal;
+};
+
+function mergeAbortSignals(
+  timeoutMs?: number,
+  signal?: AbortSignal,
+): AbortSignal | undefined {
+  const parts: AbortSignal[] = [];
+  if (timeoutMs != null && timeoutMs > 0) {
+    parts.push(AbortSignal.timeout(timeoutMs));
+  }
+  if (signal) parts.push(signal);
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  return AbortSignal.any(parts);
+}
 
 export interface ToniaOptions {
   /** `tonia_*` key. Defaults to `process.env.TONIA_API_KEY`. */
@@ -138,7 +160,7 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
+    opts: CallOptions = {},
   ): Promise<T> {
     const normalized = assertPathAllowed(path);
     return this.send<T>(method, normalized, body, opts);
@@ -148,7 +170,7 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
+    opts: CallOptions = {},
   ): Promise<T> {
     const res = await this.rawFetch(method, path, body, opts);
     const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
@@ -204,7 +226,7 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
+    opts: CallOptions = {},
   ): AsyncGenerator<SseEvent, void, unknown> {
     const normalized = assertPathAllowed(path);
     const self = this;
@@ -250,7 +272,7 @@ export class Tonia {
         throw err;
       }
 
-      yield* iterateSse(res.body);
+      yield* iterateSse(res.body, opts.signal);
     })();
   }
 
@@ -258,7 +280,7 @@ export class Tonia {
     method: string,
     path: string,
     body?: unknown,
-    opts: { auth?: AuthStyle | "none"; headers?: Record<string, string>; timeout?: number } = {},
+    opts: CallOptions = {},
   ): Promise<Response> {
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -301,9 +323,8 @@ export class Tonia {
     const url = `${this.baseURL}${path.startsWith("/") ? path : `/${path}`}`;
     const timeoutMs = opts.timeout ?? this.timeout;
     const init: RequestInit = { method, headers, body: payload };
-    if (timeoutMs != null && timeoutMs > 0) {
-      init.signal = AbortSignal.timeout(timeoutMs);
-    }
+    const signal = mergeAbortSignals(timeoutMs, opts.signal);
+    if (signal) init.signal = signal;
     return this.fetchImpl(url, init);
   }
 }
@@ -363,17 +384,35 @@ class ModelsResource {
 class ChatCompletionsResource {
   constructor(private readonly client: Tonia) {}
 
-  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
-  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
-  create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
+  create(
+    body: Record<string, unknown> & { stream: true },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown>;
+  create(
+    body: Record<string, unknown> & { stream?: false },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown>;
+  create(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
-      return this.stream(body);
+      return this.stream(body, opts);
     }
-    return this.client.request("POST", "/v1/chat/completions", body, { auth: "bearer" });
+    return this.client.request("POST", "/v1/chat/completions", body, {
+      auth: "bearer",
+      ...opts,
+    });
   }
 
-  stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
-    return this.client.stream("POST", "/v1/chat/completions", body, { auth: "bearer" });
+  stream(
+    body: Record<string, unknown> = {},
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown> {
+    return this.client.stream("POST", "/v1/chat/completions", body, {
+      auth: "bearer",
+      ...opts,
+    });
   }
 }
 
@@ -387,17 +426,29 @@ class ChatResource {
 class MessagesResource {
   constructor(private readonly client: Tonia) {}
 
-  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
-  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
-  create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
+  create(
+    body: Record<string, unknown> & { stream: true },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown>;
+  create(
+    body: Record<string, unknown> & { stream?: false },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown>;
+  create(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
-      return this.stream(body);
+      return this.stream(body, opts);
     }
-    return this.client.request("POST", "/v1/messages", body, { auth: "api_key" });
+    return this.client.request("POST", "/v1/messages", body, { auth: "api_key", ...opts });
   }
 
-  stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
-    return this.client.stream("POST", "/v1/messages", body, { auth: "api_key" });
+  stream(
+    body: Record<string, unknown> = {},
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown> {
+    return this.client.stream("POST", "/v1/messages", body, { auth: "api_key", ...opts });
   }
 }
 
@@ -512,17 +563,29 @@ class AudioResource {
 class ResponsesResource {
   constructor(private readonly client: Tonia) {}
 
-  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
-  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
-  create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
+  create(
+    body: Record<string, unknown> & { stream: true },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown>;
+  create(
+    body: Record<string, unknown> & { stream?: false },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown>;
+  create(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
-      return this.stream(body);
+      return this.stream(body, opts);
     }
-    return this.client.request("POST", "/v1/responses", body);
+    return this.client.request("POST", "/v1/responses", body, opts);
   }
 
-  stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
-    return this.client.stream("POST", "/v1/responses", body);
+  stream(
+    body: Record<string, unknown> = {},
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown> {
+    return this.client.stream("POST", "/v1/responses", body, opts);
   }
 }
 
@@ -552,18 +615,34 @@ class InteractionsResource {
   constructor(private readonly client: Tonia) {}
 
   /** Gemini text and image SKUs. Native Interactions body. */
-  create(body: Record<string, unknown> & { stream: true }): AsyncGenerator<SseEvent, void, unknown>;
-  create(body: Record<string, unknown> & { stream?: false }): Promise<unknown>;
-  create(body: Record<string, unknown>): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
+  create(
+    body: Record<string, unknown> & { stream: true },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown>;
+  create(
+    body: Record<string, unknown> & { stream?: false },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown>;
+  create(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): Promise<unknown> | AsyncGenerator<SseEvent, void, unknown> {
     if (body.stream === true) {
-      return this.stream(body);
+      return this.stream(body, opts);
     }
     return this.client.request("POST", "/v1/interactions", body, {
-      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      timeout: opts?.timeout ?? this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      signal: opts?.signal,
     });
   }
 
-  stream(body: Record<string, unknown> = {}): AsyncGenerator<SseEvent, void, unknown> {
-    return this.client.stream("POST", "/v1/interactions", body);
+  stream(
+    body: Record<string, unknown> = {},
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ): AsyncGenerator<SseEvent, void, unknown> {
+    return this.client.stream("POST", "/v1/interactions", body, {
+      timeout: opts?.timeout ?? this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      signal: opts?.signal,
+    });
   }
 }
