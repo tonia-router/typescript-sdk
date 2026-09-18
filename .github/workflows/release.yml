@@ -43,7 +43,7 @@ jobs:
           \`mistral/voxtral-mini-tts-2603\`, \`openai/gpt-transcribe\`.
           Workspace audio must be on (portal \`/dlp\`).
 
-          Install until npm: \`npm add https://github.com/tonia-router/typescript-sdk/releases/download/${TAG}/tonia-router-sdk-0.3.1.tgz\`
+          Install until npm: \`npm add https://github.com/tonia-router/typescript-sdk/releases/download/${TAG}/tonia-router-sdk-0.4.4.tgz\`
 
           Requires Node.js 22+. Apache 2.0, copyright 2026 tonia inc.
           EOF

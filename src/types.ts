@@ -52,7 +52,14 @@ export type ReasoningDescriptor = {
 };
 
 export type CustomerSurface = {
-  family: "text" | "image" | "speech" | "transcription" | "embeddings" | "rerank";
+  family:
+    | "text"
+    | "image"
+    | "speech"
+    | "transcription"
+    | "embeddings"
+    | "rerank"
+    | "systemone";
   path: string;
   sdk: string;
   body: string;

@@ -13,6 +13,7 @@ export const ESCAPE_HATCH_PREFIXES = [
   "/v1/responses",
   "/v1/rerank",
   "/v1/interactions",
+  "/v1/systemone",
 ] as const;
 
 export function normalizePath(path: string): string {

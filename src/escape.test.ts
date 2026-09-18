@@ -16,6 +16,7 @@ test("supported prefixes pass", () => {
   assert.equal(assertPathAllowed("/v1/status"), "/v1/status");
   assert.equal(assertPathAllowed("/v1/audio/speech"), "/v1/audio/speech");
   assert.equal(assertPathAllowed("/v1/audio/transcriptions"), "/v1/audio/transcriptions");
+  assert.equal(assertPathAllowed("/v1/systemone"), "/v1/systemone");
   assert.equal(
     assertPathAllowed("/v1/models/../chat/completions"),
     "/v1/chat/completions",

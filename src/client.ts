@@ -25,7 +25,7 @@ export type AuthStyle = "bearer" | "api_key";
 /** Image / interactions helpers abort after this many ms when `timeout` is unset. */
 export const IMAGE_TIMEOUT_MS = 300_000;
 
-export const SDK_VERSION = "0.3.1";
+export const SDK_VERSION = "0.4.4";
 export const SDK_USER_AGENT = `tonia-sdk-ts/${SDK_VERSION}`;
 
 export type CallOptions = {
@@ -235,8 +235,13 @@ export class Tonia {
         body && typeof body === "object"
           ? { ...(body as Record<string, unknown>), stream: true }
           : body;
+      const timeoutMs = opts.timeout ?? self.timeout;
+      const signal = mergeAbortSignals(timeoutMs, opts.signal);
       const res = await self.rawFetch(method, normalized, payload, {
         ...opts,
+        // Timeout is already inside `signal` — do not merge a second timer.
+        timeout: 0,
+        signal,
         headers: {
           Accept: "text/event-stream",
           ...(opts.headers ?? {}),
@@ -272,7 +277,7 @@ export class Tonia {
         throw err;
       }
 
-      yield* iterateSse(res.body, opts.signal);
+      yield* iterateSse(res.body, signal);
     })();
   }
 
@@ -462,15 +467,23 @@ class EmbeddingsResource {
 class ImagesResource {
   constructor(private readonly client: Tonia) {}
   /** OpenAI-shaped generate. Gemini uses interactions.create. */
-  generate(body: Record<string, unknown>) {
+  generate(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ) {
     return this.client.request("POST", "/v1/images/generations", body, {
-      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      timeout: opts?.timeout ?? this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      signal: opts?.signal,
     });
   }
   /** OpenAI-shaped edit. Gemini uses interactions.create. */
-  edit(body: Record<string, unknown>) {
+  edit(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ) {
     return this.client.request("POST", "/v1/images/edits", body, {
-      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      timeout: opts?.timeout ?? this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      signal: opts?.signal,
     });
   }
 }
@@ -478,9 +491,13 @@ class ImagesResource {
 class AudioSpeechResource {
   constructor(private readonly client: Tonia) {}
   /** OpenAI-shaped TTS. Returns audio bytes. */
-  create(body: Record<string, unknown>) {
+  create(
+    body: Record<string, unknown>,
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ) {
     return this.client.request<Uint8Array>("POST", "/v1/audio/speech", body, {
-      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      timeout: opts?.timeout ?? this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      signal: opts?.signal,
       headers: { Accept: "application/octet-stream, audio/*, application/json" },
     });
   }
@@ -530,12 +547,15 @@ function transcriptionFileBlob(
 class AudioTranscriptionsResource {
   constructor(private readonly client: Tonia) {}
   /** OpenAI-shaped STT. Multipart `file` + `model`. Returns JSON. */
-  create(body: {
-    model: string;
-    file: AudioTranscriptionFile;
-    filename?: string;
-    [key: string]: unknown;
-  }) {
+  create(
+    body: {
+      model: string;
+      file: AudioTranscriptionFile;
+      filename?: string;
+      [key: string]: unknown;
+    },
+    opts?: Pick<CallOptions, "timeout" | "signal">,
+  ) {
     const { model, file, filename, ...fields } = body;
     const { blob, filename: name } = transcriptionFileBlob(file, filename);
     const form = new FormData();
@@ -546,7 +566,8 @@ class AudioTranscriptionsResource {
       form.append(key, typeof value === "string" ? value : String(value));
     }
     return this.client.request("POST", "/v1/audio/transcriptions", form, {
-      timeout: this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      timeout: opts?.timeout ?? this.client.timeout ?? IMAGE_TIMEOUT_MS,
+      signal: opts?.signal,
     });
   }
 }

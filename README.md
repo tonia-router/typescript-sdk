@@ -15,7 +15,7 @@ redistribute this software.
 ```bash
 npm add @tonia-router/sdk
 # until npm is live:
-# npm add https://github.com/tonia-router/typescript-sdk/releases/download/v0.3.1/tonia-router-sdk-0.3.1.tgz
+# npm add https://github.com/tonia-router/typescript-sdk/releases/download/v0.4.4/tonia-router-sdk-0.4.4.tgz
 # from a local checkout (build first): npm add ../typescript-sdk
 ```
 
@@ -202,7 +202,8 @@ The response is native Interactions JSON. Output images live on
 `model_output` steps (`type: image` or `mime_type` starting with `image/`).
 The SDK does not reshape that envelope to OpenAI `{data:[{b64_json}]}`.
 
-Image helpers abort after 300 seconds unless you set `timeout` on `Tonia`.
+Image and audio helpers abort after 300 seconds unless you set `timeout` on
+`Tonia`. Pass `{ signal }` to hang up earlier.
 Chat-vision / `/v1/images` **inputs** still use inline `data:image/png;base64,...`
 URLs; Pass refuses remote `http(s)` image links with
 `remote_image_url_not_supported`.

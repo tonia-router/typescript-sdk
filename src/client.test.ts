@@ -127,6 +127,28 @@ test("image helpers pass a 300s abort signal when timeout is unset", async () =>
   assert.equal(signal.aborted, false);
 });
 
+test("image and audio helpers forward a caller abort signal", async () => {
+  const seen: AbortSignal[] = [];
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async (_input, init) => {
+      if (init?.signal) seen.push(init.signal);
+      return Response.json({ data: [] });
+    },
+  });
+  const ac = new AbortController();
+  await client.images.generate({ model: "image", prompt: "hello" }, { signal: ac.signal });
+  await client.audio.speech.create(
+    { model: "gpt-4o-mini-tts", input: "hello", voice: "alloy" },
+    { signal: ac.signal },
+  );
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0]?.aborted, false);
+  ac.abort();
+  assert.equal(seen[0]?.aborted, true);
+  assert.equal(seen[1]?.aborted, true);
+});
+
 test("chat does not abort by default", async () => {
   let signal: AbortSignal | undefined;
   const client = new Tonia({
@@ -234,6 +256,38 @@ test("stream abort signal hangs up and cancels the body", async () => {
   });
   assert.equal(cancelled, true);
   assert.equal(fetchSignal?.aborted, true);
+});
+
+test("stream timeout after headers cancels the body", async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start() {
+      /* stay open until abort */
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    timeout: 20,
+    fetch: async () =>
+      new Response(body, { headers: { "content-type": "text/event-stream" } }),
+  });
+  await assert.rejects(async () => {
+    for await (const _event of client.chat.completions.stream({
+      model: "gpt-test",
+      messages: [],
+    })) {
+      /* hang until timeout */
+    }
+  }, (error: unknown) => {
+    return (
+      error instanceof DOMException &&
+      (error.name === "AbortError" || error.name === "TimeoutError")
+    );
+  });
+  assert.equal(cancelled, true);
 });
 
 test("breaking a stream cancels the body reader", async () => {
@@ -447,6 +501,24 @@ test("all named nonstream helpers stay on the locked public surface", async () =
     "/v1/rerank",
     "/v1/interactions",
   ]));
+});
+
+test("systemone stays an escape hatch with no typed helper", async () => {
+  const urls: string[] = [];
+  const client = new Tonia({
+    apiKey: "tonia_test",
+    fetch: async (input) => {
+      urls.push(String(input).replace("https://pass.tonia.ca:8443", ""));
+      return Response.json({ answers: {} });
+    },
+  });
+  await client.request("POST", "/v1/systemone", {
+    model: "typesafe/jev-latest",
+    state: "The sky is blue.",
+    questions: { color: { type: "noul", instructions: "Is the sky blue?" } },
+  });
+  assert.deepEqual(urls, ["/v1/systemone"]);
+  assert.equal((client as { systemone?: unknown }).systemone, undefined);
 });
 
 test("nested tool image and web-search body passes through unchanged", async () => {
