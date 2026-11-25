@@ -63,14 +63,16 @@ export function realtimeConnectUrl(
       retryable: false,
     });
   }
-  const mode = (options.mode ?? "cascaded").trim().toLowerCase();
+  const mode = (options.mode ?? "native").trim().toLowerCase();
   if (mode !== "cascaded" && mode !== "native") {
     throw new InvalidRequestError("realtime mode must be cascaded or native", {
       code: "realtime_mode_invalid",
       retryable: false,
     });
   }
-  if (mode === "native" && !options.transcripts) {
+  // Native is the default and needs transcripts; unset means on for native.
+  const transcripts = options.transcripts ?? mode === "native";
+  if (mode === "native" && !transcripts) {
     throw new InvalidRequestError("native Live needs transcripts=1", {
       code: "realtime_native_transcripts_required",
       retryable: false,
@@ -82,7 +84,7 @@ export function realtimeConnectUrl(
     mode,
   });
   if (options.chatModel?.trim()) query.set("chat_model", options.chatModel.trim());
-  if (options.transcripts) query.set("transcripts", "1");
+  if (transcripts) query.set("transcripts", "1");
   return `${realtimeWsUrl(baseURL, options.realtimeURL)}?${query.toString()}`;
 }
 
