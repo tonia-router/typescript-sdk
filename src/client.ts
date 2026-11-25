@@ -25,7 +25,7 @@ export type AuthStyle = "bearer" | "api_key";
 /** Image / interactions helpers abort after this many ms when `timeout` is unset. */
 export const IMAGE_TIMEOUT_MS = 300_000;
 
-export const SDK_VERSION = "0.4.4";
+export const SDK_VERSION = "0.4.5";
 export const SDK_USER_AGENT = `tonia-sdk-ts/${SDK_VERSION}`;
 
 export type CallOptions = {
